@@ -10,7 +10,6 @@ let score = 0;
 let highScore = localStorage.getItem('blockBlastHighScore') || 0;
 let activeDrag = null;
 
-// פלטת צבעים מודרנית עם גרדיאנטים/צלליות
 const COLORS = [
     { bg: '#38bdf8', shadow: '#0284c7' }, // תכלת
     { bg: '#f43f5e', shadow: '#be123c' }, // אדום
@@ -58,14 +57,14 @@ function generateShapes() {
 function createShapeElement(shape, color) {
     const container = document.createElement('div');
     container.classList.add('shape-preview');
-    container.style.gridTemplateColumns = `repeat(${shape[0].length}, 22px)`;
+    container.style.gridTemplateColumns = `repeat(${shape[0].length}, 24px)`;
     container.style.touchAction = 'none';
 
     shape.forEach(row => {
         row.forEach(cell => {
             const block = document.createElement('div');
-            block.style.width = '22px';
-            block.style.height = '22px';
+            block.style.width = '24px';
+            block.style.height = '24px';
             if (cell) {
                 block.style.backgroundColor = color.bg;
                 block.style.borderRadius = '5px';
@@ -84,20 +83,33 @@ function createShapeElement(shape, color) {
 function startDragging(e, element, shape, color) {
     e.preventDefault();
 
+    // התאמת גודל הבלוק הנגרר לגודל המשבצות המדויק של הלוח
+    const boardCell = boardElement.children[0];
+    const cellSize = boardCell.getBoundingClientRect().width;
+
     const clone = element.cloneNode(true);
     clone.style.position = 'fixed';
     clone.style.zIndex = '1000';
     clone.style.pointerEvents = 'none';
-    clone.style.transform = 'scale(1.25)'; // הגדלה קלה לחוויית משחק כיפית
-    document.body.appendChild(clone);
+    clone.style.gridTemplateColumns = `repeat(${shape[0].length}, ${cellSize}px)`;
+    
+    // התאמת גודל התת-בלוקים בשיבוט
+    Array.from(clone.children).forEach(child => {
+        child.style.width = `${cellSize}px`;
+        child.style.height = `${cellSize}px`;
+    });
 
+    document.body.appendChild(clone);
     element.style.opacity = '0.1';
 
     activeDrag = {
         originalElement: element,
         cloneElement: clone,
         shapeData: shape,
-        color: color
+        color: color,
+        cellSize: cellSize,
+        touchOffsetX: e.clientX,
+        touchOffsetY: e.clientY
     };
 
     updateClonePosition(e);
@@ -111,14 +123,10 @@ function onDragging(e) {
     updateClonePosition(e);
     clearPreview();
 
-    // בדיקה מעל איזו משבצת נמצאת הצורה הנגררת
-    const targetCell = getCellUnderCursor(e);
-    if (targetCell) {
-        const startRow = parseInt(targetCell.dataset.row);
-        const startCol = parseInt(targetCell.dataset.col);
-
-        if (canPlaceShape(activeDrag.shapeData, startRow, startCol)) {
-            showPreview(activeDrag.shapeData, startRow, startCol);
+    const targetPos = getTargetBoardPosition();
+    if (targetPos) {
+        if (canPlaceShape(activeDrag.shapeData, targetPos.row, targetPos.col)) {
+            showPreview(activeDrag.shapeData, targetPos.row, targetPos.col);
         }
     }
 }
@@ -126,22 +134,28 @@ function onDragging(e) {
 function updateClonePosition(e) {
     if (!activeDrag) return;
     const rect = activeDrag.cloneElement.getBoundingClientRect();
-    // הזזה למעלה (Offset) כדי שהאצבע לא תסתיר את הלוח בזמן גרירה
+    // גרירה ישירה ומדויקת מתחת לסמן/אצבע ללא קפיצות
     activeDrag.cloneElement.style.left = `${e.clientX - rect.width / 2}px`;
-    activeDrag.cloneElement.style.top = `${e.clientY - rect.height - 15}px`;
+    activeDrag.cloneElement.style.top = `${e.clientY - rect.height / 2 - 20}px`;
 }
 
-function getCellUnderCursor(e) {
-    // בודק את האלמנט שנמצא בנקודה שמעל האצבע/סמן
-    const rect = activeDrag.cloneElement.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    
-    activeDrag.cloneElement.style.display = 'none';
-    const el = document.elementFromPoint(centerX, centerY);
-    activeDrag.cloneElement.style.display = 'grid';
+function getTargetBoardPosition() {
+    if (!activeDrag) return null;
 
-    return el && el.classList.contains('cell') ? el : null;
+    const cloneRect = activeDrag.cloneElement.getBoundingClientRect();
+    const boardRect = boardElement.getBoundingClientRect();
+
+    // חישוב מיקום הבלוק השמאלי-עליון של הצורה ביחס ללוח
+    const relativeX = cloneRect.left - boardRect.left;
+    const relativeY = cloneRect.top - boardRect.top;
+
+    const col = Math.round(relativeX / (activeDrag.cellSize + 6)); // 6px gap
+    const row = Math.round(relativeY / (activeDrag.cellSize + 6));
+
+    if (row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE) {
+        return { row, col };
+    }
+    return null;
 }
 
 function showPreview(shape, startRow, startCol) {
@@ -150,8 +164,10 @@ function showPreview(shape, startRow, startCol) {
             if (shape[r][c]) {
                 const targetRow = startRow + r;
                 const targetCol = startCol + c;
-                const cell = boardElement.children[targetRow * BOARD_SIZE + targetCol];
-                if (cell) cell.classList.add('preview');
+                if (targetRow < BOARD_SIZE && targetCol < BOARD_SIZE) {
+                    const cell = boardElement.children[targetRow * BOARD_SIZE + targetCol];
+                    if (cell) cell.classList.add('preview');
+                }
             }
         }
     }
@@ -168,22 +184,15 @@ function stopDragging(e) {
     document.removeEventListener('pointerup', stopDragging);
     clearPreview();
 
-    const targetCell = getCellUnderCursor(e);
+    const targetPos = getTargetBoardPosition();
 
-    if (targetCell) {
-        const startRow = parseInt(targetCell.dataset.row);
-        const startCol = parseInt(targetCell.dataset.col);
+    if (targetPos && canPlaceShape(activeDrag.shapeData, targetPos.row, targetPos.col)) {
+        placeShape(activeDrag.shapeData, targetPos.row, targetPos.col, activeDrag.color);
+        activeDrag.originalElement.remove();
+        checkClears();
 
-        if (canPlaceShape(activeDrag.shapeData, startRow, startCol)) {
-            placeShape(activeDrag.shapeData, startRow, startCol, activeDrag.color);
-            activeDrag.originalElement.remove();
-            checkClears();
-
-            if (shapesContainer.children.length === 0) {
-                generateShapes();
-            }
-        } else {
-            activeDrag.originalElement.style.opacity = '1';
+        if (shapesContainer.children.length === 0) {
+            generateShapes();
         }
     } else {
         activeDrag.originalElement.style.opacity = '1';
@@ -200,7 +209,11 @@ function canPlaceShape(shape, startRow, startCol) {
                 const targetRow = startRow + r;
                 const targetCol = startCol + c;
 
-                if (targetRow >= BOARD_SIZE || targetCol >= BOARD_SIZE || boardState[targetRow][targetCol]) {
+                if (targetRow >= BOARD_SIZE || targetCol >= BOARD_SIZE || targetRow < 0 || targetCol < 0) {
+                    return false;
+                }
+
+                if (boardState[targetRow][targetCol]) {
                     return false;
                 }
             }
