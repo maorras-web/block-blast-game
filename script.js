@@ -8,7 +8,8 @@ const restartBtn = document.getElementById('restart-btn');
 let boardState = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
 let score = 0;
 let highScore = localStorage.getItem('blockBlastHighScore') || 0;
-let draggedShape = null;
+let selectedShapeIndex = null;
+let currentShapes = [];
 
 const SHAPES = [
     [[1]], 
@@ -19,7 +20,7 @@ const SHAPES = [
     [[1, 1, 1], [0, 1, 0]]
 ];
 
-highScoreElement.textContent = highScore;
+if (highScoreElement) highScoreElement.textContent = highScore;
 
 function createBoard() {
     boardElement.innerHTML = '';
@@ -30,8 +31,8 @@ function createBoard() {
             cell.dataset.row = r;
             cell.dataset.col = c;
             
-            cell.addEventListener('dragover', handleDragOver);
-            cell.addEventListener('drop', handleDrop);
+            // לחיצה על משבצת בלוח להנחת הצורה שנבחרה
+            cell.addEventListener('click', () => handleCellClick(r, c));
             
             boardElement.appendChild(cell);
         }
@@ -40,58 +41,75 @@ function createBoard() {
 
 function generateShapes() {
     shapesContainer.innerHTML = '';
+    currentShapes = [];
+    selectedShapeIndex = null;
+
     for (let i = 0; i < 3; i++) {
-        const shapeData = SHAPES[Math.floor(Math.random() * SHAPES.length)];
-        const shapeElement = createShapeElement(shapeData);
+        const randomShape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+        currentShapes.push(randomShape);
+        
+        const shapeElement = createShapeElement(randomShape, i);
         shapesContainer.appendChild(shapeElement);
     }
 }
 
-function createShapeElement(shape) {
+function createShapeElement(shape, index) {
     const container = document.createElement('div');
     container.classList.add('shape-preview');
-    container.draggable = true;
+    container.dataset.index = index;
     container.style.display = 'grid';
-    container.style.gridTemplateColumns = `repeat(${shape[0].length}, 25px)`;
-    container.style.gap = '2px';
-    container.style.cursor = 'grab';
+    container.style.gridTemplateColumns = `repeat(${shape[0].length}, 22px)`;
+    container.style.gap = '3px';
+    container.style.cursor = 'pointer';
+    container.style.padding = '5px';
+    container.style.borderRadius = '8px';
 
     shape.forEach(row => {
         row.forEach(cell => {
             const block = document.createElement('div');
-            block.style.width = '25px';
-            block.style.height = '25px';
+            block.style.width = '22px';
+            block.style.height = '22px';
             block.style.backgroundColor = cell ? '#3b82f6' : 'transparent';
             block.style.borderRadius = '4px';
             container.appendChild(block);
         });
     });
 
-    container.addEventListener('dragstart', (e) => {
-        draggedShape = { element: container, data: shape };
+    // סמני לחיצה לבחירת צורה
+    container.addEventListener('click', () => {
+        document.querySelectorAll('.shape-preview').forEach(el => el.style.border = 'none');
+        selectedShapeIndex = index;
+        container.style.border = '2px solid #ef4444'; // סימון בצבע אדום
     });
 
     return container;
 }
 
-function handleDragOver(e) {
-    e.preventDefault();
-}
+function handleCellClick(startRow, startCol) {
+    if (selectedShapeIndex === null || !currentShapes[selectedShapeIndex]) return;
 
-function handleDrop(e) {
-    e.preventDefault();
-    if (!draggedShape) return;
+    const shape = currentShapes[selectedShapeIndex];
 
-    const startRow = parseInt(e.target.dataset.row);
-    const startCol = parseInt(e.target.dataset.col);
+    if (canPlaceShape(shape, startRow, startCol)) {
+        placeShape(shape, startRow, startCol);
+        
+        // הסרת הצורה שהונחה
+        const shapeElements = shapesContainer.children;
+        for (let el of shapeElements) {
+            if (parseInt(el.dataset.index) === selectedShapeIndex) {
+                el.style.visibility = 'hidden';
+                el.style.pointerEvents = 'none';
+                break;
+            }
+        }
 
-    if (canPlaceShape(draggedShape.data, startRow, startCol)) {
-        placeShape(draggedShape.data, startRow, startCol);
-        draggedShape.element.remove();
-        draggedShape = null;
+        currentShapes[selectedShapeIndex] = null;
+        selectedShapeIndex = null;
+
         checkClears();
 
-        if (shapesContainer.children.length === 0) {
+        // אם כולן הונחו, ייצר חדשות
+        if (currentShapes.every(s => s === null)) {
             generateShapes();
         }
     }
@@ -120,14 +138,12 @@ function placeShape(shape, startRow, startCol) {
                 const targetRow = startRow + r;
                 const targetCol = startCol + c;
                 boardState[targetRow][targetCol] = 1;
-                
-                const cell = boardElement.children[targetRow * BOARD_SIZE + targetCol];
-                cell.style.backgroundColor = '#3b82f6';
             }
         }
     }
     score += 10;
     updateScore();
+    renderBoard();
 }
 
 function checkClears() {
@@ -165,10 +181,10 @@ function renderBoard() {
 }
 
 function updateScore() {
-    scoreElement.textContent = score;
+    if (scoreElement) scoreElement.textContent = score;
     if (score > highScore) {
         highScore = score;
-        highScoreElement.textContent = highScore;
+        if (highScoreElement) highScoreElement.textContent = highScore;
         localStorage.setItem('blockBlastHighScore', highScore);
     }
 }
@@ -177,11 +193,11 @@ function restartGame() {
     boardState = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
     score = 0;
     updateScore();
-    createBoard();
+    renderBoard();
     generateShapes();
 }
 
-restartBtn.addEventListener('click', restartGame);
+if (restartBtn) restartBtn.addEventListener('click', restartGame);
 
 createBoard();
 generateShapes();
