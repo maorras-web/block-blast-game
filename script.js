@@ -8,8 +8,8 @@ const restartBtn = document.getElementById('restart-btn');
 let boardState = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
 let score = 0;
 let highScore = localStorage.getItem('blockBlastHighScore') || 0;
-let selectedShapeIndex = null;
-let currentShapes = [];
+
+let activeDrag = null; // מנהל את הבלוק שנגרר כרגע
 
 const SHAPES = [
     [[1]], 
@@ -30,10 +30,6 @@ function createBoard() {
             cell.classList.add('cell');
             cell.dataset.row = r;
             cell.dataset.col = c;
-            
-            // לחיצה על משבצת בלוח להנחת הצורה שנבחרה
-            cell.addEventListener('click', () => handleCellClick(r, c));
-            
             boardElement.appendChild(cell);
         }
     }
@@ -41,78 +37,109 @@ function createBoard() {
 
 function generateShapes() {
     shapesContainer.innerHTML = '';
-    currentShapes = [];
-    selectedShapeIndex = null;
-
     for (let i = 0; i < 3; i++) {
         const randomShape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
-        currentShapes.push(randomShape);
-        
-        const shapeElement = createShapeElement(randomShape, i);
+        const shapeElement = createShapeElement(randomShape);
         shapesContainer.appendChild(shapeElement);
     }
 }
 
-function createShapeElement(shape, index) {
+function createShapeElement(shape) {
     const container = document.createElement('div');
     container.classList.add('shape-preview');
-    container.dataset.index = index;
     container.style.display = 'grid';
-    container.style.gridTemplateColumns = `repeat(${shape[0].length}, 22px)`;
+    container.style.gridTemplateColumns = `repeat(${shape[0].length}, 25px)`;
     container.style.gap = '3px';
-    container.style.cursor = 'pointer';
-    container.style.padding = '5px';
-    container.style.borderRadius = '8px';
+    container.style.cursor = 'grab';
+    container.style.touchAction = 'none'; // מונע גלילה של המסך בזמן גרירה בנייד
 
     shape.forEach(row => {
         row.forEach(cell => {
             const block = document.createElement('div');
-            block.style.width = '22px';
-            block.style.height = '22px';
+            block.style.width = '25px';
+            block.style.height = '25px';
             block.style.backgroundColor = cell ? '#3b82f6' : 'transparent';
             block.style.borderRadius = '4px';
             container.appendChild(block);
         });
     });
 
-    // סמני לחיצה לבחירת צורה
-    container.addEventListener('click', () => {
-        document.querySelectorAll('.shape-preview').forEach(el => el.style.border = 'none');
-        selectedShapeIndex = index;
-        container.style.border = '2px solid #ef4444'; // סימון בצבע אדום
-    });
+    // התחלת גרירה במגע או בעכבר
+    container.addEventListener('pointerdown', (e) => startDragging(e, container, shape));
 
     return container;
 }
 
-function handleCellClick(startRow, startCol) {
-    if (selectedShapeIndex === null || !currentShapes[selectedShapeIndex]) return;
+function startDragging(e, element, shape) {
+    e.preventDefault();
 
-    const shape = currentShapes[selectedShapeIndex];
+    // שכפול הצורה כדי שתצוף על המסך בזמן גרירה
+    const clone = element.cloneNode(true);
+    clone.style.position = 'fixed';
+    clone.style.zIndex = '1000';
+    clone.style.pointerEvents = 'none'; // מונע חסימת אירועים מתחתיה
+    clone.style.opacity = '0.9';
+    clone.style.transform = 'scale(1.1)';
+    document.body.appendChild(clone);
 
-    if (canPlaceShape(shape, startRow, startCol)) {
-        placeShape(shape, startRow, startCol);
-        
-        // הסרת הצורה שהונחה
-        const shapeElements = shapesContainer.children;
-        for (let el of shapeElements) {
-            if (parseInt(el.dataset.index) === selectedShapeIndex) {
-                el.style.visibility = 'hidden';
-                el.style.pointerEvents = 'none';
-                break;
+    element.style.opacity = '0.2'; // הנמכת שקיפות המקור בזמן גרירה
+
+    activeDrag = {
+        originalElement: element,
+        cloneElement: clone,
+        shapeData: shape
+    };
+
+    updateClonePosition(e);
+
+    document.addEventListener('pointermove', onDragging);
+    document.addEventListener('pointerup', stopDragging);
+}
+
+function onDragging(e) {
+    if (!activeDrag) return;
+    updateClonePosition(e);
+}
+
+function updateClonePosition(e) {
+    if (!activeDrag) return;
+    const rect = activeDrag.cloneElement.getBoundingClientRect();
+    // ממקם את הצורה בדיוק מתחת לאצבע/עכבר
+    activeDrag.cloneElement.style.left = `${e.clientX - rect.width / 2}px`;
+    activeDrag.cloneElement.style.top = `${e.clientY - rect.height / 2}px`;
+}
+
+function stopDragging(e) {
+    if (!activeDrag) return;
+
+    document.removeEventListener('pointermove', onDragging);
+    document.removeEventListener('pointerup', stopDragging);
+
+    // מציאת ה משבצת מתחת לנקודת השחרור
+    activeDrag.cloneElement.style.display = 'none';
+    const elementUnderCursor = document.elementFromPoint(e.clientX, e.clientY);
+
+    if (elementUnderCursor && elementUnderCursor.classList.contains('cell')) {
+        const startRow = parseInt(elementUnderCursor.dataset.row);
+        const startCol = parseInt(elementUnderCursor.dataset.col);
+
+        if (canPlaceShape(activeDrag.shapeData, startRow, startCol)) {
+            placeShape(activeDrag.shapeData, startRow, startCol);
+            activeDrag.originalElement.remove();
+            checkClears();
+
+            if (shapesContainer.children.length === 0) {
+                generateShapes();
             }
+        } else {
+            activeDrag.originalElement.style.opacity = '1';
         }
-
-        currentShapes[selectedShapeIndex] = null;
-        selectedShapeIndex = null;
-
-        checkClears();
-
-        // אם כולן הונחו, ייצר חדשות
-        if (currentShapes.every(s => s === null)) {
-            generateShapes();
-        }
+    } else {
+        activeDrag.originalElement.style.opacity = '1';
     }
+
+    activeDrag.cloneElement.remove();
+    activeDrag = null;
 }
 
 function canPlaceShape(shape, startRow, startCol) {
