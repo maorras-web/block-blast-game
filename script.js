@@ -8,8 +8,16 @@ const restartBtn = document.getElementById('restart-btn');
 let boardState = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
 let score = 0;
 let highScore = localStorage.getItem('blockBlastHighScore') || 0;
+let activeDrag = null;
 
-let activeDrag = null; // מנהל את הבלוק שנגרר כרגע
+// פלטת צבעים מודרנית עם גרדיאנטים/צלליות
+const COLORS = [
+    { bg: '#38bdf8', shadow: '#0284c7' }, // תכלת
+    { bg: '#f43f5e', shadow: '#be123c' }, // אדום
+    { bg: '#10b981', shadow: '#047857' }, // ירוק
+    { bg: '#fbbf24', shadow: '#d97706' }, // צהוב
+    { bg: '#a855f7', shadow: '#7e22ce' }  // סגול
+];
 
 const SHAPES = [
     [[1]], 
@@ -17,7 +25,9 @@ const SHAPES = [
     [[1], [1]], 
     [[1, 1, 1]], 
     [[1, 1], [1, 1]], 
-    [[1, 1, 1], [0, 1, 0]]
+    [[1, 1, 1], [0, 1, 0]],
+    [[1, 1, 1, 1]],
+    [[1, 0], [1, 0], [1, 1]]
 ];
 
 if (highScoreElement) highScoreElement.textContent = highScore;
@@ -39,55 +49,55 @@ function generateShapes() {
     shapesContainer.innerHTML = '';
     for (let i = 0; i < 3; i++) {
         const randomShape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
-        const shapeElement = createShapeElement(randomShape);
+        const randomColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+        const shapeElement = createShapeElement(randomShape, randomColor);
         shapesContainer.appendChild(shapeElement);
     }
 }
 
-function createShapeElement(shape) {
+function createShapeElement(shape, color) {
     const container = document.createElement('div');
     container.classList.add('shape-preview');
-    container.style.display = 'grid';
-    container.style.gridTemplateColumns = `repeat(${shape[0].length}, 25px)`;
-    container.style.gap = '3px';
-    container.style.cursor = 'grab';
-    container.style.touchAction = 'none'; // מונע גלילה של המסך בזמן גרירה בנייד
+    container.style.gridTemplateColumns = `repeat(${shape[0].length}, 22px)`;
+    container.style.touchAction = 'none';
 
     shape.forEach(row => {
         row.forEach(cell => {
             const block = document.createElement('div');
-            block.style.width = '25px';
-            block.style.height = '25px';
-            block.style.backgroundColor = cell ? '#3b82f6' : 'transparent';
-            block.style.borderRadius = '4px';
+            block.style.width = '22px';
+            block.style.height = '22px';
+            if (cell) {
+                block.style.backgroundColor = color.bg;
+                block.style.borderRadius = '5px';
+                block.style.boxShadow = `inset 0 -3px 0 ${color.shadow}`;
+            } else {
+                block.style.backgroundColor = 'transparent';
+            }
             container.appendChild(block);
         });
     });
 
-    // התחלת גרירה במגע או בעכבר
-    container.addEventListener('pointerdown', (e) => startDragging(e, container, shape));
-
+    container.addEventListener('pointerdown', (e) => startDragging(e, container, shape, color));
     return container;
 }
 
-function startDragging(e, element, shape) {
+function startDragging(e, element, shape, color) {
     e.preventDefault();
 
-    // שכפול הצורה כדי שתצוף על המסך בזמן גרירה
     const clone = element.cloneNode(true);
     clone.style.position = 'fixed';
     clone.style.zIndex = '1000';
-    clone.style.pointerEvents = 'none'; // מונע חסימת אירועים מתחתיה
-    clone.style.opacity = '0.9';
-    clone.style.transform = 'scale(1.1)';
+    clone.style.pointerEvents = 'none';
+    clone.style.transform = 'scale(1.25)'; // הגדלה קלה לחוויית משחק כיפית
     document.body.appendChild(clone);
 
-    element.style.opacity = '0.2'; // הנמכת שקיפות המקור בזמן גרירה
+    element.style.opacity = '0.1';
 
     activeDrag = {
         originalElement: element,
         cloneElement: clone,
-        shapeData: shape
+        shapeData: shape,
+        color: color
     };
 
     updateClonePosition(e);
@@ -99,14 +109,56 @@ function startDragging(e, element, shape) {
 function onDragging(e) {
     if (!activeDrag) return;
     updateClonePosition(e);
+    clearPreview();
+
+    // בדיקה מעל איזו משבצת נמצאת הצורה הנגררת
+    const targetCell = getCellUnderCursor(e);
+    if (targetCell) {
+        const startRow = parseInt(targetCell.dataset.row);
+        const startCol = parseInt(targetCell.dataset.col);
+
+        if (canPlaceShape(activeDrag.shapeData, startRow, startCol)) {
+            showPreview(activeDrag.shapeData, startRow, startCol);
+        }
+    }
 }
 
 function updateClonePosition(e) {
     if (!activeDrag) return;
     const rect = activeDrag.cloneElement.getBoundingClientRect();
-    // ממקם את הצורה בדיוק מתחת לאצבע/עכבר
+    // הזזה למעלה (Offset) כדי שהאצבע לא תסתיר את הלוח בזמן גרירה
     activeDrag.cloneElement.style.left = `${e.clientX - rect.width / 2}px`;
-    activeDrag.cloneElement.style.top = `${e.clientY - rect.height / 2}px`;
+    activeDrag.cloneElement.style.top = `${e.clientY - rect.height - 15}px`;
+}
+
+function getCellUnderCursor(e) {
+    // בודק את האלמנט שנמצא בנקודה שמעל האצבע/סמן
+    const rect = activeDrag.cloneElement.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    
+    activeDrag.cloneElement.style.display = 'none';
+    const el = document.elementFromPoint(centerX, centerY);
+    activeDrag.cloneElement.style.display = 'grid';
+
+    return el && el.classList.contains('cell') ? el : null;
+}
+
+function showPreview(shape, startRow, startCol) {
+    for (let r = 0; r < shape.length; r++) {
+        for (let c = 0; c < shape[0].length; c++) {
+            if (shape[r][c]) {
+                const targetRow = startRow + r;
+                const targetCol = startCol + c;
+                const cell = boardElement.children[targetRow * BOARD_SIZE + targetCol];
+                if (cell) cell.classList.add('preview');
+            }
+        }
+    }
+}
+
+function clearPreview() {
+    document.querySelectorAll('.cell.preview').forEach(c => c.classList.remove('preview'));
 }
 
 function stopDragging(e) {
@@ -114,17 +166,16 @@ function stopDragging(e) {
 
     document.removeEventListener('pointermove', onDragging);
     document.removeEventListener('pointerup', stopDragging);
+    clearPreview();
 
-    // מציאת ה משבצת מתחת לנקודת השחרור
-    activeDrag.cloneElement.style.display = 'none';
-    const elementUnderCursor = document.elementFromPoint(e.clientX, e.clientY);
+    const targetCell = getCellUnderCursor(e);
 
-    if (elementUnderCursor && elementUnderCursor.classList.contains('cell')) {
-        const startRow = parseInt(elementUnderCursor.dataset.row);
-        const startCol = parseInt(elementUnderCursor.dataset.col);
+    if (targetCell) {
+        const startRow = parseInt(targetCell.dataset.row);
+        const startCol = parseInt(targetCell.dataset.col);
 
         if (canPlaceShape(activeDrag.shapeData, startRow, startCol)) {
-            placeShape(activeDrag.shapeData, startRow, startCol);
+            placeShape(activeDrag.shapeData, startRow, startCol, activeDrag.color);
             activeDrag.originalElement.remove();
             checkClears();
 
@@ -158,13 +209,13 @@ function canPlaceShape(shape, startRow, startCol) {
     return true;
 }
 
-function placeShape(shape, startRow, startCol) {
+function placeShape(shape, startRow, startCol, color) {
     for (let r = 0; r < shape.length; r++) {
         for (let c = 0; c < shape[0].length; c++) {
             if (shape[r][c]) {
                 const targetRow = startRow + r;
                 const targetCol = startCol + c;
-                boardState[targetRow][targetCol] = 1;
+                boardState[targetRow][targetCol] = color;
             }
         }
     }
@@ -178,31 +229,59 @@ function checkClears() {
     let colsToClear = [];
 
     for (let r = 0; r < BOARD_SIZE; r++) {
-        if (boardState[r].every(val => val === 1)) rowsToClear.push(r);
+        if (boardState[r].every(val => val !== 0)) rowsToClear.push(r);
     }
 
     for (let c = 0; c < BOARD_SIZE; c++) {
-        if (boardState.every(row => row[c] === 1)) colsToClear.push(c);
+        if (boardState.every(row => row[c] !== 0)) colsToClear.push(c);
     }
 
+    const cellsToAnimate = new Set();
+
     rowsToClear.forEach(r => {
-        for (let c = 0; c < BOARD_SIZE; c++) boardState[r][c] = 0;
+        for (let c = 0; c < BOARD_SIZE; c++) cellsToAnimate.add(r * BOARD_SIZE + c);
     });
 
     colsToClear.forEach(c => {
-        for (let r = 0; r < BOARD_SIZE; r++) boardState[r][c] = 0;
+        for (let r = 0; r < BOARD_SIZE; r++) cellsToAnimate.add(r * BOARD_SIZE + c);
     });
 
-    score += (rowsToClear.length + colsToClear.length) * 100;
-    updateScore();
-    renderBoard();
+    if (cellsToAnimate.size > 0) {
+        cellsToAnimate.forEach(index => {
+            const cell = boardElement.children[index];
+            cell.classList.add('clearing');
+        });
+
+        setTimeout(() => {
+            rowsToClear.forEach(r => {
+                for (let c = 0; c < BOARD_SIZE; c++) boardState[r][c] = 0;
+            });
+
+            colsToClear.forEach(c => {
+                for (let r = 0; r < BOARD_SIZE; r++) boardState[r][c] = 0;
+            });
+
+            score += (rowsToClear.length + colsToClear.length) * 120;
+            updateScore();
+            renderBoard();
+        }, 250);
+    }
 }
 
 function renderBoard() {
     for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
             const cell = boardElement.children[r * BOARD_SIZE + c];
-            cell.style.backgroundColor = boardState[r][c] ? '#3b82f6' : '#334155';
+            cell.classList.remove('clearing');
+            const cellData = boardState[r][c];
+
+            if (cellData) {
+                cell.style.backgroundColor = cellData.bg;
+                cell.style.boxShadow = `inset 0 -3px 0 ${cellData.shadow}`;
+            } else {
+                cell.style.backgroundColor = '#1e293b';
+                cell.style.boxShadow = 'none';
+            }
         }
     }
 }
